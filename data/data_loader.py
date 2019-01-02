@@ -9,6 +9,7 @@ from torch.utils.data.sampler import Sampler
 import librosa
 import numpy as np
 import scipy.signal
+import scipy
 import torch
 import torchaudio
 import math
@@ -81,7 +82,7 @@ class NoiseInjection(object):
 
 
 class SpectrogramParser(AudioParser):
-    def __init__(self, audio_conf, normalize=False, augment=False):
+    def __init__(self, audio_conf, normalize=False, augment=False, normalize_by_frame=False):
         """
         Parses audio file into spectrogram with optional normalization and various augmentations
         :param audio_conf: Dictionary containing the sample rate, window and the window length/stride in seconds
@@ -94,6 +95,7 @@ class SpectrogramParser(AudioParser):
         self.sample_rate = audio_conf['sample_rate']
         self.window = windows.get(audio_conf['window'], windows['hamming'])
         self.normalize = normalize
+        self.normalize_by_frame = normalize_by_frame
         self.augment = augment
         self.noiseInjector = NoiseInjection(audio_conf['noise_dir'], self.sample_rate,
                                             audio_conf['noise_levels']) if audio_conf.get(
@@ -120,8 +122,14 @@ class SpectrogramParser(AudioParser):
         spect = np.log1p(spect)
         spect = torch.FloatTensor(spect)
         if self.normalize:
-            mean = spect.mean()
-            std = spect.std()
+            if self.normalize_by_frame:
+                mean = spect.mean(dim=0, keepdim=True)
+                std = spect.std(dim=0, keepdim=True)
+                mean = torch.FloatTensor(scipy.ndimage.filters.gaussian_filter1d(mean.numpy(), 20))
+                std = torch.FloatTensor(scipy.ndimage.filters.gaussian_filter1d(std.numpy(), 20))
+            else:
+                mean = spect.mean()
+                std = spect.std()
             spect.add_(-mean)
             spect.div_(std)
 
@@ -132,7 +140,7 @@ class SpectrogramParser(AudioParser):
 
 
 class SpectrogramDataset(Dataset, SpectrogramParser):
-    def __init__(self, audio_conf, manifest_filepath, labels, normalize=False, augment=False):
+    def __init__(self, audio_conf, manifest_filepath, labels, normalize=False, augment=False, normalize_by_frame=False):
         """
         Dataset that loads tensors via a csv containing file paths to audio files and transcripts separated by
         a comma. Each new line is a different sample. Example below:
@@ -152,7 +160,7 @@ class SpectrogramDataset(Dataset, SpectrogramParser):
         self.ids = ids
         self.size = len(ids)
         self.labels_map = dict([(labels[i], i) for i in range(len(labels))])
-        super(SpectrogramDataset, self).__init__(audio_conf, normalize, augment)
+        super(SpectrogramDataset, self).__init__(audio_conf, normalize, augment, normalize_by_frame)
 
     def __getitem__(self, index):
         sample = self.ids[index]
