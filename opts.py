@@ -18,7 +18,7 @@ def add_decoder_args(parser):
 
 def add_inference_args(parser):
     parser.add_argument('--cuda', action="store_true", help='Use cuda to test model')
-    parser.add_argument('--decoder', default="greedy", choices=["greedy", "beam"], type=str, help="Decoder to use")
+    parser.add_argument('--decoder', default="greedy", choices=["greedy", "beam", "none"], type=str, help="Decoder to use")
     parser.add_argument('--model-path', default='models/deepspeech_final.pth',
                         help='Path to model file created by training')
     return parser

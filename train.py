@@ -25,11 +25,13 @@ parser.add_argument('--labels-path', default='labels.json', help='Contains all c
 parser.add_argument('--window-size', default=.02, type=float, help='Window size for spectrogram in seconds')
 parser.add_argument('--window-stride', default=.01, type=float, help='Window stride for spectrogram in seconds')
 parser.add_argument('--window', default='hamming', help='Window type for spectrogram generation')
+parser.add_argument('--normalize_by_frame', dest='normalize_by_frame', action='store_true', help='Norm spectrogram by frame')
 parser.add_argument('--hidden-size', default=800, type=int, help='Hidden size of RNNs')
 parser.add_argument('--hidden-layers', default=5, type=int, help='Number of RNN layers')
 parser.add_argument('--rnn-type', default='gru', help='Type of the RNN. rnn|gru|lstm are supported')
 parser.add_argument('--epochs', default=70, type=int, help='Number of training epochs')
 parser.add_argument('--cuda', dest='cuda', action='store_true', help='Use cuda to train model')
+parser.add_argument('--adam', dest='adam', action='store_true', help='Use Adam optimizer')
 parser.add_argument('--lr', '--learning-rate', default=3e-4, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--max-norm', default=400, type=int, help='Norm cutoff to prevent explosion of gradients')
@@ -136,8 +138,11 @@ if __name__ == '__main__':
         labels = DeepSpeech.get_labels(model)
         audio_conf = DeepSpeech.get_audio_conf(model)
         parameters = model.parameters()
-        optimizer = torch.optim.SGD(parameters, lr=args.lr,
-                                    momentum=args.momentum, nesterov=True)
+        if args.adam:
+            optimizer = torch.optim.Adam(parameters, lr=args.lr)
+        else:
+            optimizer = torch.optim.SGD(parameters, lr=args.lr,
+                                        momentum=args.momentum, nesterov=True)
         if not args.finetune:  # Don't want to restart training
             if args.cuda:
                 model.cuda()
@@ -200,9 +205,9 @@ if __name__ == '__main__':
     criterion = CTCLoss()
     decoder = GreedyDecoder(labels)
     train_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.train_manifest, labels=labels,
-                                       normalize=True, augment=args.augment)
+                                       normalize=True, augment=args.augment, normalize_by_frame=args.normalize_by_frame)
     test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.val_manifest, labels=labels,
-                                      normalize=True, augment=False)
+                                      normalize=True, augment=False, normalize_by_frame=args.normalize_by_frame)
     if not args.distributed:
         train_sampler = BucketingSampler(train_dataset, batch_size=args.batch_size)
     else:
@@ -249,8 +254,9 @@ if __name__ == '__main__':
             out = out.transpose(0, 1)  # TxNxH
 
             loss = criterion(out, targets, output_sizes, target_sizes)
-            loss = loss / inputs.size(0)  # average the loss by minibatch
-
+            # loss = loss / inputs.size(0)  # average the loss by minibatch
+            loss = loss / input_sizes.sum().float()  # average the loss by minibatch
+            
             inf = float("inf")
             if args.distributed:
                 loss_value = reduce_tensor(loss, args.world_size)[0]

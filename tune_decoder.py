@@ -27,6 +27,8 @@ parser.add_argument('--lm-beta-to', default=0.45, type=float,
                        help='Language model word bonus (all words) end tuning')
 parser.add_argument('--lm-num-alphas', default=45, type=float, help='Number of alpha candidates for tuning')
 parser.add_argument('--lm-num-betas', default=8, type=float, help='Number of beta candidates for tuning')
+parser.add_argument('--cuda', action="store_true", help='Use cuda to test model')
+
 parser = add_decoder_args(parser)
 args = parser.parse_args()
 
@@ -94,25 +96,42 @@ if __name__ == '__main__':
     def result_callback(result):
         results.append(result)
 
+    if args.num_workers > 1:
+        p = Pool(args.num_workers)
 
-    p = Pool(args.num_workers)
+        cand_alphas = np.linspace(args.lm_alpha_from, args.lm_alpha_to, args.lm_num_alphas)
+        cand_betas = np.linspace(args.lm_beta_from, args.lm_beta_to, args.lm_num_betas)
+        params_grid = []
+        for x, alpha in enumerate(cand_alphas):
+            for y, beta in enumerate(cand_betas):
+                params_grid.append((alpha, beta, x, y))
 
-    cand_alphas = np.linspace(args.lm_alpha_from, args.lm_alpha_to, args.lm_num_alphas)
-    cand_betas = np.linspace(args.lm_beta_from, args.lm_beta_to, args.lm_num_betas)
-    params_grid = []
-    for x, alpha in enumerate(cand_alphas):
-        for y, beta in enumerate(cand_betas):
-            params_grid.append((alpha, beta, x, y))
+        futures = []
+        for index, (alpha, beta, x, y) in enumerate(params_grid):
+            print("Scheduling decode for a={}, b={} ({},{}).".format(alpha, beta, x, y))
+            f = p.apply_async(decode_dataset, (logits, test_dataset, batch_size, alpha, beta, x, y, labels, index),
+                              callback=result_callback)
+            futures.append(f)
+        for f in futures:
+            f.wait()
+            print("Result calculated:", f.get())
+        print("Saving tuning results to: {}".format(args.output_path))
+        with open(args.output_path, "w") as fh:
+            json.dump(results, fh)
+    else:
+        cand_alphas = np.linspace(args.lm_alpha_from, args.lm_alpha_to, args.lm_num_alphas)
+        cand_betas = np.linspace(args.lm_beta_from, args.lm_beta_to, args.lm_num_betas)
+        params_grid = []
+        for x, alpha in enumerate(cand_alphas):
+            for y, beta in enumerate(cand_betas):
+                params_grid.append((alpha, beta, x, y))
 
-    futures = []
-    for index, (alpha, beta, x, y) in enumerate(params_grid):
-        print("Scheduling decode for a={}, b={} ({},{}).".format(alpha, beta, x, y))
-        f = p.apply_async(decode_dataset, (logits, test_dataset, batch_size, alpha, beta, x, y, labels, index),
-                          callback=result_callback)
-        futures.append(f)
-    for f in futures:
-        f.wait()
-        print("Result calculated:", f.get())
-    print("Saving tuning results to: {}".format(args.output_path))
-    with open(args.output_path, "w") as fh:
-        json.dump(results, fh)
+        futures = []
+        for index, (alpha, beta, x, y) in enumerate(params_grid):
+            print("Decoding for a={}, b={} ({},{}).".format(alpha, beta, x, y))
+            f = decode_dataset(logits, test_dataset, batch_size, alpha, beta, x, y, labels, index)
+            futures.append(f)
+        print("Saving tuning results to: {}".format(args.output_path))
+        with open(args.output_path, "w") as fh:
+            json.dump(results, fh)
+    
