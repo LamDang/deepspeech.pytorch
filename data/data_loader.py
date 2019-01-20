@@ -22,8 +22,10 @@ windows = {'hamming': scipy.signal.hamming, 'hann': scipy.signal.hann, 'blackman
 
 def load_audio(path):
     sound, _ = torchaudio.load(path, normalization=True)
-    sound = sound.numpy()
+    sound = sound.numpy() 
     if len(sound.shape) > 1:
+        if sound.shape[0] == 1:
+            sound = sound.T
         if sound.shape[1] == 1:
             sound = sound.squeeze()
         else:
@@ -125,14 +127,13 @@ class SpectrogramParser(AudioParser):
             if self.normalize_by_frame:
                 mean = spect.mean(dim=0, keepdim=True)
                 std = spect.std(dim=0, keepdim=True)
-                mean = torch.FloatTensor(scipy.ndimage.filters.gaussian_filter1d(mean.numpy(), 20))
-                std = torch.FloatTensor(scipy.ndimage.filters.gaussian_filter1d(std.numpy(), 20))
+                mean = torch.FloatTensor(scipy.ndimage.filters.gaussian_filter1d(mean.numpy(), 100))
+                std = torch.FloatTensor(scipy.ndimage.filters.gaussian_filter1d(std.numpy(), 100)) + 1e-7
             else:
                 mean = spect.mean()
                 std = spect.std()
             spect.add_(-mean)
-            spect.div_(std)
-
+            spect.div_(std)        
         return spect
 
     def parse_transcript(self, transcript_path):
@@ -192,6 +193,7 @@ def _collate_fn(batch):
     input_percentages = torch.FloatTensor(minibatch_size)
     target_sizes = torch.IntTensor(minibatch_size)
     targets = []
+    
     for x in range(minibatch_size):
         sample = batch[x]
         tensor = sample[0]
