@@ -6,7 +6,10 @@ import time
 import torch.distributed as dist
 import torch.utils.data.distributed
 from tqdm import tqdm
-from warpctc_pytorch import CTCLoss
+try:
+	from warpctc_pytorch import CTCLoss
+except:
+	from torch.nn import CTCLoss
 
 from data.data_loader import AudioDataLoader, SpectrogramDataset, BucketingSampler, DistributedBucketingSampler
 from data.utils import reduce_tensor
@@ -249,19 +252,21 @@ if __name__ == '__main__':
 
             if args.cuda:
                 inputs = inputs.cuda()
-
+            
             out, output_sizes = model(inputs, input_sizes)
             out = out.transpose(0, 1)  # TxNxH
-
+            print(out.shape, targets.shape)
+            
             loss = criterion(out, targets, output_sizes, target_sizes)
-            # loss = loss / inputs.size(0)  # average the loss by minibatch
-            loss = loss / input_sizes.sum().float()  # average the loss by minibatch
+            
+            loss = loss / inputs.size(0)  # average the loss by minibatch
+            # loss = loss # / input_sizes.sum().float()  # average the loss by minibatch
             
             inf = float("inf")
             if args.distributed:
                 loss_value = reduce_tensor(loss, args.world_size)[0]
             else:
-                loss_value = loss.item()
+                loss_value = loss.item() * inputs.size(0) / input_sizes.sum().float()
             if loss_value == inf or loss_value == -inf:
                 print("WARNING: received an inf loss, setting loss value to 0")
                 loss_value = 0
@@ -309,7 +314,7 @@ if __name__ == '__main__':
             for i, (data) in tqdm(enumerate(test_loader), total=len(test_loader)):
                 inputs, targets, input_percentages, target_sizes = data
                 input_sizes = input_percentages.mul_(int(inputs.size(3))).int()
-
+                
                 # unflatten targets
                 split_targets = []
                 offset = 0
